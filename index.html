@@ -354,8 +354,8 @@
 
         // КОСМІЧНЕ ДЕРЕВО (ЕТЕРНАЛЬНА ЛОГІКА)
         class CosmicTree {
-            constructor(x, layer, generation = 0, initialAge = 0) {
-                this.x = x; // 0 to 1
+            constructor(x, layer, generation = 0, initialAge = 0, data = null) {
+                this.x = x;
                 this.layer = layer;
                 this.generation = generation;
                 this.type = Math.floor(Math.random() * 4);
@@ -367,13 +367,31 @@
                 this.id = Math.random().toString(36).substr(2, 9);
                 this.isSplitting = false;
 
+                if (data) {
+                    Object.assign(this, data);
+                }
+
                 this.scale = layer === 'back' ? 0.6 : layer === 'mid' ? 0.85 : 1.0;
                 this.opacity = layer === 'back' ? 0.4 : layer === 'mid' ? 0.7 : 1.0;
             }
 
+            getData() {
+                return {
+                    x: this.x,
+                    generation: this.generation,
+                    type: this.type,
+                    age: this.age,
+                    maxAge: this.maxAge,
+                    radiationDamage: this.radiationDamage,
+                    stormEnergy: this.stormEnergy,
+                    id: this.id
+                };
+            }
+
             grow() {
-                let baseGrowth = 0.002 * (0.3 + ssn / 150 + solarWind / 2000) * timeSpeed;
-                
+                const sMod = seasons[currentSeason].growth;
+                let baseGrowth = 0.002 * (0.3 + ssn / 150 + solarWind / 2000) * timeSpeed * sMod;
+
                 // Вплив фаз циклу
                 if (currentDay < 3) baseGrowth *= 0.7; // Фаза адаптації
                 else if (currentDay > 10) baseGrowth *= 1.4; // Фаза експансії
@@ -400,11 +418,20 @@
                 const rad = this.radiationDamage;
                 const storm = this.stormEnergy;
 
-                let hue = 130 + (this.generation * 20) % 100;
+                // Сезонна палітра
+                let hue = 130;
+                if (currentSeason === 'Spring') hue = 110 + (this.generation * 10) % 50;
+                else if (currentSeason === 'Summer') hue = 150 + (this.generation * 5) % 40;
+                else if (currentSeason === 'Autumn') hue = 25 + (this.generation * 15) % 40;
+                else if (currentSeason === 'Winter') hue = 190 + (this.generation * 20) % 60;
+
                 if (rad > 0.5) hue = 320;
                 else if (storm > 0.5) hue = 190;
-                
-                ctx.strokeStyle = `hsl(${hue}, ${70 + storm * 30}%, ${50 + rad * 20}%)`;
+
+                const saturation = 70 + storm * 30;
+                const lightness = (currentSeason === 'Winter' ? 65 : 50) + rad * 20;
+
+                ctx.strokeStyle = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
                 ctx.globalAlpha = (0.7 + Math.sin(Date.now() * 0.001 + this.phase) * 0.1) * this.opacity;
 
                 const segments = Math.floor(Math.min(this.age, this.maxAge) * 2) + 2;
@@ -428,7 +455,7 @@
                 if (this.age > 2 && depth % 2 === 0) {
                     const branchAngle = angle + (Math.sin(Date.now() * 0.001 + x) * 0.3) + 0.6;
                     this.recursiveDraw(ctx, nx, ny, len * 0.6, branchAngle, depth - 1, rad, storm);
-                    
+
                     const branchAngle2 = angle - 0.6 - (Math.sin(Date.now() * 0.001 + x) * 0.3);
                     this.recursiveDraw(ctx, nx, ny, len * 0.6, branchAngle2, depth - 1, rad, storm);
                 } else {
@@ -437,21 +464,28 @@
                 }
 
                 if (depth === 1) {
-                    ctx.fillStyle = `hsla(${160 + storm * 40}, 100%, 70%, 0.8)`;
-                    ctx.beginPath(); ctx.arc(nx, ny, 5 * this.scale * (1 + storm), 0, Math.PI * 2); ctx.fill();
+                    // Фрукти/Квіти залежно від сезону
+                    let bloomHue = 160;
+                    if (currentSeason === 'Spring') bloomHue = 320; // Рожеві квіти
+                    else if (currentSeason === 'Summer') bloomHue = 50;  // Золоті плоди
+                    else if (currentSeason === 'Winter') bloomHue = 180; // Крижані кристали
+
+                    ctx.fillStyle = `hsla(${bloomHue}, 100%, 75%, 0.8)`;
+                    ctx.beginPath(); ctx.arc(nx, ny, (4 + (currentSeason === 'Summer' ? 3 : 0)) * this.scale * (1 + storm), 0, Math.PI * 2); ctx.fill();
                 }
             }
 
             getInfo() {
                 return `
                     <b>ID:</b> ${this.id}<br>
+                    <b>Season:</b> ${currentSeason}<br>
                     <b>Gen:</b> ${this.generation}<br>
                     <b>Evolution:</b> ${((this.age / this.maxAge) * 100).toFixed(1)}%<br>
                     <b>Health:</b> ${((1 - this.radiationDamage) * 100).toFixed(0)}%<br>
-                    <b>Energy:</b> ${(this.stormEnergy * 100).toFixed(0)}%<br>
-                    <b>Structure:</b> ${this.age > 3 ? 'Complex' : 'Linear'}
+                    <b>Energy:</b> ${(this.stormEnergy * 100).toFixed(0)}%
                 `;
             }
+
         }
 
         // КЕРУВАННЯ ПОПУЛЯЦІЄЮ
@@ -461,15 +495,17 @@
             front: Array.from({ length: 15 }, () => new CosmicTree(Math.random(), 'front'))
         };
 
-        function updateForest() {
+        function updateForest(dt = 1) {
             ['back', 'mid', 'front'].forEach(layer => {
                 const layerTrees = forest[layer];
                 for (let i = layerTrees.length - 1; i >= 0; i--) {
                     const t = layerTrees[i];
-                    t.grow();
+                    //dt дозволяє симулювати пропущений час (offline growth)
+                    for (let step = 0; step < dt; step++) {
+                        t.grow();
+                    }
 
                     if (t.isSplitting) {
-                        // Мітоз: одне дерево стає двома малими
                         layerTrees.splice(i, 1);
                         const spawnX1 = Math.max(0, Math.min(1, t.x - 0.02));
                         const spawnX2 = Math.max(0, Math.min(1, t.x + 0.02));
@@ -477,10 +513,60 @@
                         layerTrees.push(new CosmicTree(spawnX2, layer, t.generation + 1, 0.5));
                     }
                 }
-                // Обмеження популяції для стабільності
                 if (layerTrees.length > 50) layerTrees.splice(0, 10);
             });
             document.getElementById('treeCount').textContent = forest.back.length + forest.mid.length + forest.front.length;
+        }
+
+        // ЗБЕРЕЖЕННЯ ТА ЗАВАНТАЖЕННЯ
+        function saveForestState() {
+            const state = {
+                forest: {
+                    back: forest.back.map(t => t.getData()),
+                    mid: forest.mid.map(t => t.getData()),
+                    front: forest.front.map(t => t.getData())
+                },
+                lastUpdate: Date.now()
+            };
+            localStorage.setItem('ibonirium_eternal_forest', JSON.stringify(state));
+        }
+
+        function loadForestState() {
+            const saved = localStorage.getItem('ibonirium_eternal_forest');
+            if (saved) {
+                const state = JSON.parse(saved);
+                ['back', 'mid', 'front'].forEach(layer => {
+                    forest[layer] = state.forest[layer].map(d => new CosmicTree(d.x, layer, d.generation, d.age, d));
+                });
+
+                // Симуляція "офлайн" росту
+                const now = Date.now();
+                const offlineMs = now - state.lastUpdate;
+                const offlineSteps = Math.min(1000, Math.floor(offlineMs / 1000)); // Обмежуємо щоб не повісити браузер
+                if (offlineSteps > 0) {
+                    updateForest(offlineSteps);
+                }
+            }
+        }
+
+        loadForestState();
+        setInterval(saveForestState, 10000); // Зберігаємо кожні 10 секунд
+
+        // СЕЗОННА СИСТЕМА
+        let currentSeason = 'Winter'; // Spring, Summer, Autumn, Winter
+        const seasons = {
+            'Winter': { growth: 0.5 },
+            'Spring': { growth: 1.5 },
+            'Summer': { growth: 1.2 },
+            'Autumn': { growth: 0.8 }
+        };
+
+        function getSeason() {
+            const month = new Date().getMonth();
+            if (month >= 2 && month <= 4) return 'Spring';
+            if (month >= 5 && month <= 7) return 'Summer';
+            if (month >= 8 && month <= 10) return 'Autumn';
+            return 'Winter';
         }
 
         // ЦИКЛ ТА ЧАС
@@ -491,10 +577,11 @@
         function updateClocks() {
             const now = Date.now();
             const diff = now - START_TIME;
-            
+
             const totalDays = Math.floor(diff / 86400000);
             currentCycle = Math.floor(totalDays / 13) + 1;
             currentDay = totalDays % 13;
+            currentSeason = getSeason();
 
             const h = Math.floor((diff / 3600000) % 24).toString().padStart(2, '0');
             const m = Math.floor((diff / 60000) % 60).toString().padStart(2, '0');
@@ -507,9 +594,18 @@
             document.getElementById('dayDisplay').textContent = currentDay;
 
             const phases = ["Adaptation", "Synthesis", "Growth", "Mutation", "Radiation Hunt", "Expansion", "Climax", "Spititual", "Deep Root", "Solar Link", "Crystalizing", "Mitosis Peak", "Stable"];
-            document.getElementById('phase').textContent = phases[currentDay] || "Eternal";
+
+            const seasonLabel = {
+                'Spring': '🌸 SPRING',
+                'Summer': '☀️ SUMMER',
+                'Autumn': '🍂 AUTUMN',
+                'Winter': '❄️ WINTER'
+            }[currentSeason];
+
+            document.getElementById('phase').textContent = `${seasonLabel} | ${phases[currentDay] || "Eternal"}`;
         }
         setInterval(updateClocks, 1000); updateClocks();
+
 
         // КЛІК
         addEventListener('click', (e) => {
@@ -519,7 +615,7 @@
                 forest[layer].forEach(t => {
                     const dx = e.clientX - t.screenX;
                     const dy = e.clientY - t.screenY;
-                    if (Math.sqrt(dx*dx + dy*dy) < t.screenRadius + 20) {
+                    if (Math.sqrt(dx * dx + dy * dy) < t.screenRadius + 20) {
                         document.getElementById('treeDetails').innerHTML = t.getInfo();
                         document.getElementById('treeInfo').style.display = 'block';
                         found = true;
@@ -534,11 +630,11 @@
             updateParallax();
             drawStars();
             drawAurora();
-            updateForest();
+            updateForest(1); // Кожен кадр - 1 ітерація росту
 
-            bctx.clearRect(0,0,starC.width, starC.height);
-            mctx.clearRect(0,0,starC.width, starC.height);
-            fctx.clearRect(0,0,starC.width, starC.height);
+            bctx.clearRect(0, 0, starC.width, starC.height);
+            mctx.clearRect(0, 0, starC.width, starC.height);
+            fctx.clearRect(0, 0, starC.width, starC.height);
 
             forest.back.forEach(t => t.draw(bctx));
             forest.mid.forEach(t => t.draw(mctx));
@@ -552,18 +648,18 @@
             ctxs.clearRect(0, 0, sensC.width, sensC.height);
             const py = 140;
             // SSN
-            ctxs.fillStyle = `rgba(255,200,0,${0.3 + ssn/200})`;
-            ctxs.beginPath(); ctxs.arc(60, py-40, 15 + ssn/40, 0, 7); ctxs.fill();
-            ctxs.fillStyle = '#fff'; ctxs.fillText('SOLAR', 43, py+20);
+            ctxs.fillStyle = `rgba(255,200,0,${0.3 + ssn / 200})`;
+            ctxs.beginPath(); ctxs.arc(60, py - 40, 15 + ssn / 40, 0, 7); ctxs.fill();
+            ctxs.fillStyle = '#fff'; ctxs.fillText('SOLAR', 43, py + 20);
             // RAD
             ctxs.strokeStyle = radiationLevel > 0.5 ? '#f00' : '#0f0';
             ctxs.lineWidth = 4;
-            ctxs.beginPath(); ctxs.arc(160, py-40, 20, -1.5, -1.5 + (radiationLevel * 6.28)); ctxs.stroke();
-            ctxs.fillText('RAD', 148, py+20);
+            ctxs.beginPath(); ctxs.arc(160, py - 40, 20, -1.5, -1.5 + (radiationLevel * 6.28)); ctxs.stroke();
+            ctxs.fillText('RAD', 148, py + 20);
             // STORM
             ctxs.strokeStyle = '#0af';
-            ctxs.beginPath(); ctxs.arc(260, py-40, 20, -1.5, -1.5 + (stormLevel * 6.28)); ctxs.stroke();
-            ctxs.fillText('GEOMAG', 240, py+20);
+            ctxs.beginPath(); ctxs.arc(260, py - 40, 20, -1.5, -1.5 + (stormLevel * 6.28)); ctxs.stroke();
+            ctxs.fillText('GEOMAG', 240, py + 20);
         }
 
         loop();
